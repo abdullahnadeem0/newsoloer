@@ -6,6 +6,87 @@ import Agent from '../models/Agent.js';
 import mongoose from 'mongoose';
 
 // ============================================
+// SHARED: List of all file/URL document fields
+// ============================================
+const FILE_FIELDS = [
+    'idProof', 'marksheet', 'incomeCertificate',
+    'profilePhoto', 'previousCertificate', 'bankPassbook',
+    'dependentPassport1', 'sponsorDetails', 'bankStatementLetter',
+    'visaCopies', 'pendingDocument', 'visaDocument',
+    'studyContinuousLetter', 'dependentPassport2', 'transferStudents',
+    'signedCAL', 'paymentInvoice',
+    'applicationFeeReceipt', 'englishExamReceipt',
+    'internalAdmissionFee', 'bankCheckDraft',
+    'insuranceFee', 'tuitionFee',
+    'finalSignedCAL', 'finalPaymentInvoice',
+    'initialAdmissionPortfolio', 'deferralAdmissionPortfolio'
+];
+
+// ============================================
+// HELPER: Process uploaded files + URLs
+// Returns { documents, urls, sources }
+// ============================================
+const processDocuments = (reqFiles = {}, body = {}) => {
+    const documents = {};
+    const urls = {};
+    const sources = {};
+
+    FILE_FIELDS.forEach(field => {
+        // 1) Uploaded file takes first priority if present
+        if (reqFiles[field] && reqFiles[field][0]) {
+            const file = reqFiles[field][0];
+            documents[field] = `uploads/agents/${file.filename}`;
+            sources[field] = 'upload';
+            return;
+        }
+
+        // 2) Otherwise, check for URL
+        const url = body[`${field}Url`];
+        if (url && typeof url === 'string' && url.trim()) {
+            documents[field] = url.trim();   // store URL as the value
+            urls[field] = url.trim();        // also store in urls object
+            sources[field] = 'url';
+        }
+    });
+
+    return { documents, urls, sources };
+};
+
+// ============================================
+// HELPER: Merge new files/URLs on top of existing docs
+// ============================================
+const mergeDocuments = (existingDocs = {}, reqFiles = {}, body = {}) => {
+    const newDocuments = { ...existingDocs };
+    const newUrls = { ...(existingDocs.urls || {}) };
+    const newSources = { ...(existingDocs.sources || {}) };
+
+    FILE_FIELDS.forEach(field => {
+        // Priority 1: New uploaded file
+        if (reqFiles[field] && reqFiles[field][0]) {
+            const file = reqFiles[field][0];
+            newDocuments[field] = `uploads/agents/${file.filename}`;
+            newUrls[field] = '';           // URL no longer relevant
+            newSources[field] = 'upload';
+            return;
+        }
+
+        // Priority 2: New URL
+        const url = body[`${field}Url`];
+        if (url && typeof url === 'string' && url.trim()) {
+            newDocuments[field] = url.trim();
+            newUrls[field] = url.trim();
+            newSources[field] = 'url';
+        }
+    });
+
+    return {
+        documents: newDocuments,
+        urls: newUrls,
+        sources: newSources
+    };
+};
+
+// ============================================
 // @desc    Create new application (Agent)
 // @route   POST /api/agent/applications
 // @access  Private (Agent)
@@ -67,31 +148,8 @@ export const createApplication = async (req, res) => {
         const bankDetails = typeof body.bankDetails === 'string'
             ? JSON.parse(body.bankDetails) : body.bankDetails;
 
-        // ===== HANDLE ALL FILES =====
-        const documents = {};
-
-        if (req.files) {
-            const fileFields = [
-                'idProof', 'marksheet', 'incomeCertificate',
-                'profilePhoto', 'previousCertificate', 'bankPassbook',
-                'dependentPassport1', 'sponsorDetails', 'bankStatementLetter',
-                'visaCopies', 'pendingDocument', 'visaDocument',
-                'studyContinuousLetter', 'dependentPassport2', 'transferStudents',
-                'signedCAL', 'paymentInvoice',
-                'applicationFeeReceipt', 'englishExamReceipt',
-                'internalAdmissionFee', 'bankCheckDraft',
-                'insuranceFee', 'tuitionFee',
-                'finalSignedCAL', 'finalPaymentInvoice',
-                'initialAdmissionPortfolio', 'deferralAdmissionPortfolio'
-            ];
-
-            fileFields.forEach(field => {
-                if (req.files[field] && req.files[field][0]) {
-                    const file = req.files[field][0];
-                    documents[field] = `uploads/agents/${file.filename}`;
-                }
-            });
-        }
+        // ===== HANDLE FILES + URLs =====
+        const { documents, urls, sources } = processDocuments(req.files || {}, body);
 
         // ===== GENERATE APPLICATION NUMBER =====
         const year = new Date().getFullYear();
@@ -116,7 +174,11 @@ export const createApplication = async (req, res) => {
             universityName: university.name,
             program: program._id,
             programName: program.name,
-            documents,
+            documents: {
+                ...documents,
+                urls,
+                sources
+            },
             statement,
             bankDetails,
             status: 'submitted',
@@ -270,36 +332,28 @@ export const updateApplication = async (req, res) => {
         const bankDetails = typeof body.bankDetails === 'string'
             ? JSON.parse(body.bankDetails) : body.bankDetails;
 
-        const newDocuments = { ...application.documents };
-
-        if (req.files) {
-            const fileFields = [
-                'idProof', 'marksheet', 'incomeCertificate',
-                'profilePhoto', 'previousCertificate', 'bankPassbook',
-                'dependentPassport1', 'sponsorDetails', 'bankStatementLetter',
-                'visaCopies', 'pendingDocument', 'visaDocument',
-                'studyContinuousLetter', 'dependentPassport2', 'transferStudents',
-                'signedCAL', 'paymentInvoice',
-                'applicationFeeReceipt', 'englishExamReceipt',
-                'internalAdmissionFee', 'bankCheckDraft',
-                'insuranceFee', 'tuitionFee',
-                'finalSignedCAL', 'finalPaymentInvoice',
-                'initialAdmissionPortfolio', 'deferralAdmissionPortfolio'
-            ];
-
-            fileFields.forEach(field => {
-                if (req.files[field] && req.files[field][0]) {
-                    const file = req.files[field][0];
-                    newDocuments[field] = `uploads/agents/${file.filename}`;
-                }
-            });
-        }
+        // Merge new files/URLs on top of existing
+        const { documents, urls, sources } = mergeDocuments(
+            application.documents || {},
+            req.files || {},
+            body
+        );
 
         if (student) application.student = { ...application.student, ...student };
         if (academic) application.academic = { ...application.academic, ...academic };
         if (statement) application.statement = { ...application.statement, ...statement };
         if (bankDetails) application.bankDetails = { ...application.bankDetails, ...bankDetails };
-        application.documents = newDocuments;
+
+        application.documents = {
+            ...documents,
+            urls,
+            sources
+        };
+
+        // Keep profileImage in sync
+        if (application.documents.profilePhoto) {
+            application.student.profileImage = application.documents.profilePhoto;
+        }
 
         if (body.university && body.university !== application.university.toString()) {
             const university = await University.findById(body.university);
@@ -446,13 +500,11 @@ export const adminGetAllApplications = async (req, res) => {
             limit = 100
         } = req.query;
 
-        // Build filter
         const filter = {};
         if (status && status !== 'all') filter.status = status;
         if (agent && agent !== 'all') filter.agent = agent;
         if (university) filter.university = university;
 
-        // Search
         if (search) {
             filter.$or = [
                 { applicationNumber: { $regex: search, $options: 'i' } },
@@ -539,14 +591,12 @@ export const adminGetStats = async (req, res) => {
         const rejected = await Application.countDocuments({ status: 'rejected' });
         const disbursed = await Application.countDocuments({ status: 'scholarship-disbursed' });
 
-        // Top agents
         const topAgents = await Application.aggregate([
             { $group: { _id: '$agent', name: { $first: '$agentName' }, count: { $sum: 1 } } },
             { $sort: { count: -1 } },
             { $limit: 5 }
         ]);
 
-        // Top universities
         const topUniversities = await Application.aggregate([
             { $group: { _id: '$university', name: { $first: '$universityName' }, count: { $sum: 1 } } },
             { $sort: { count: -1 } },
@@ -603,8 +653,6 @@ export const adminUpdateApplication = async (req, res) => {
             });
         }
 
-        // ⚠️ Admin can edit ANY application (no ownership check)
-        // But cannot edit disbursed applications
         if (application.status === 'scholarship-disbursed') {
             return res.status(400).json({
                 success: false,
@@ -633,39 +681,18 @@ export const adminUpdateApplication = async (req, res) => {
             });
         }
 
-        // ===== HANDLE NEW FILES =====
-        const newDocuments = { ...application.documents };
-
-        if (req.files) {
-            const fileFields = [
-                'idProof', 'marksheet', 'incomeCertificate',
-                'profilePhoto', 'previousCertificate', 'bankPassbook',
-                'dependentPassport1', 'sponsorDetails', 'bankStatementLetter',
-                'visaCopies', 'pendingDocument', 'visaDocument',
-                'studyContinuousLetter', 'dependentPassport2', 'transferStudents',
-                'signedCAL', 'paymentInvoice',
-                'applicationFeeReceipt', 'englishExamReceipt',
-                'internalAdmissionFee', 'bankCheckDraft',
-                'insuranceFee', 'tuitionFee',
-                'finalSignedCAL', 'finalPaymentInvoice',
-                'initialAdmissionPortfolio', 'deferralAdmissionPortfolio'
-            ];
-
-            fileFields.forEach(field => {
-                if (req.files[field] && req.files[field][0]) {
-                    const file = req.files[field][0];
-                    newDocuments[field] = `uploads/agents/${file.filename}`;
-                    console.log(`📎 Updated file: ${field} →`, newDocuments[field]);
-                }
-            });
-        }
+        // ===== MERGE FILES + URLs =====
+        const { documents, urls, sources } = mergeDocuments(
+            application.documents || {},
+            req.files || {},
+            body
+        );
 
         // ===== UPDATE FIELDS =====
         if (student) {
             application.student = { ...application.student, ...student };
-            // Update profile image if new one uploaded
-            if (newDocuments.profilePhoto) {
-                application.student.profileImage = newDocuments.profilePhoto;
+            if (documents.profilePhoto) {
+                application.student.profileImage = documents.profilePhoto;
             }
         }
 
@@ -681,9 +708,13 @@ export const adminUpdateApplication = async (req, res) => {
             application.bankDetails = { ...application.bankDetails, ...bankDetails };
         }
 
-        application.documents = newDocuments;
+        application.documents = {
+            ...documents,
+            urls,
+            sources
+        };
 
-        // ===== UPDATE UNIVERSITY/PROGRAM IF CHANGED =====
+        // ===== UPDATE UNIVERSITY/PROGRAM =====
         if (body.university && body.university !== application.university.toString()) {
             const university = await University.findById(body.university);
             if (university) {
@@ -754,10 +785,7 @@ export const adminDeleteApplication = async (req, res) => {
             });
         }
 
-        // Store info for logging
         const appNumber = application.applicationNumber;
-
-        // ⚠️ Admin can delete ANY application (no status restriction)
 
         await Application.findByIdAndDelete(req.params.id);
 
@@ -779,6 +807,7 @@ export const adminDeleteApplication = async (req, res) => {
         });
     }
 };
+
 // ============================================
 // @desc    Approve application (Admin)
 // @route   PATCH /api/admin/applications/:id/approve
@@ -812,13 +841,11 @@ export const approveApplication = async (req, res) => {
             });
         }
 
-        // Update application
         application.status = 'approved';
         application.reviewedBy = adminId;
         application.reviewedAt = new Date();
         application.adminRemarks = remarks || 'Application approved by admin';
 
-        // Add to history
         application.statusHistory = application.statusHistory || [];
         application.statusHistory.push({
             status: 'approved',
@@ -890,13 +917,11 @@ export const rejectApplication = async (req, res) => {
             });
         }
 
-        // Update
         application.status = 'rejected';
         application.reviewedBy = adminId;
         application.reviewedAt = new Date();
         application.rejectionReason = rejectionReason;
 
-        // Add to history
         application.statusHistory = application.statusHistory || [];
         application.statusHistory.push({
             status: 'rejected',
@@ -959,13 +984,11 @@ export const reviewApplication = async (req, res) => {
             });
         }
 
-        // Update - send back to agent for corrections
         application.status = 'pending-documents';
         application.reviewedBy = adminId;
         application.reviewedAt = new Date();
         application.adminRemarks = remarks;
 
-        // Add to history
         application.statusHistory = application.statusHistory || [];
         application.statusHistory.push({
             status: 'pending-documents',

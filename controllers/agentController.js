@@ -17,6 +17,53 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ============================================
+// ✅ HELPER: Extract ID file info (upload | url)
+// ============================================
+const extractIdFileInfo = (req) => {
+    let idFile = '';
+    let idFilePublicId = '';
+    let idFileUrl = req.body.idFileUrl || '';
+    let idFileSource = 'none';
+
+    // Priority 1: Uploaded file
+    if (req.file) {
+        const uploadDir = path.join(__dirname, '../uploads/agents');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+
+        const fileName = `agent_${Date.now()}_${req.file.originalname}`;
+        const filePath = path.join(uploadDir, fileName);
+        fs.writeFileSync(filePath, req.file.buffer);
+
+        idFile = `/uploads/agents/${fileName}`;
+        idFilePublicId = fileName;
+        idFileSource = 'upload';
+        idFileUrl = ''; // file upload होने पर URL ignore
+    }
+    // Priority 2: Multiple files array
+    else if (req.files && req.files.idFile && req.files.idFile[0]) {
+        const file = req.files.idFile[0];
+        idFile = `/uploads/agents/${file.filename}`;
+        idFilePublicId = file.filename;
+        idFileSource = 'upload';
+        idFileUrl = '';
+    }
+    // Priority 3: URL provided
+    else if (idFileUrl && idFileUrl.trim()) {
+        idFileSource = 'url';
+    }
+    // Priority 4: Nothing (optional)
+
+    return {
+        idFile,
+        idFilePublicId,
+        idFileUrl: idFileUrl ? idFileUrl.trim() : '',
+        idFileSource
+    };
+};
+
+// ============================================
 // 1. AGENT SIGN UP
 // ============================================
 export const signUp = async (req, res) => {
@@ -36,6 +83,8 @@ export const signUp = async (req, res) => {
         console.log("📧 Email:", email);
         console.log("👤 Name:", name);
         console.log("📱 Phone:", phone);
+        console.log("🔗 ID URL:", req.body.idFileUrl || 'none');
+        console.log("📎 ID File:", req.file ? 'uploaded' : 'none');
         console.log("=========================================");
 
         // ===== VALIDATION =====
@@ -92,25 +141,12 @@ export const signUp = async (req, res) => {
             });
         }
 
-        // ===== HANDLE FILE UPLOAD =====
-        let idFileUrl = '';
-        if (req.file) {
-            const uploadDir = path.join(__dirname, '../uploads/agents');
-            if (!fs.existsSync(uploadDir)) {
-                fs.mkdirSync(uploadDir, { recursive: true });
-            }
-            
-            const fileName = `agent_${Date.now()}_${req.file.originalname}`;
-            const filePath = path.join(uploadDir, fileName);
-            fs.writeFileSync(filePath, req.file.buffer);
-            idFileUrl = `/uploads/agents/${fileName}`;
-            console.log("📁 File uploaded:", idFileUrl);
-        } else {
-            return res.status(400).json({
-                success: false,
-                message: "ID document is required"
-            });
-        }
+        // ===== ✅ HANDLE ID FILE (upload OR url OR none) =====
+        const { idFile, idFilePublicId, idFileUrl, idFileSource } = extractIdFileInfo(req);
+
+        console.log("📁 ID file info:", { idFile, idFileUrl, idFileSource });
+
+        // ✅ कोई error नहीं — ID document optional है
 
         // ===== PARSE LANGUAGES & SKILLS =====
         let parsedLanguages = [];
@@ -142,9 +178,15 @@ export const signUp = async (req, res) => {
                 dateOfBirth: new Date(dateOfBirth),
                 gender: gender,
                 nationality: nationality || '',
-                idType: idType,
-                idNumber: idNumber.trim(),
-                idFile: idFileUrl,
+                idType: idType || '',
+                idNumber: idNumber ? idNumber.trim() : '',
+
+                // ✅ ID file fields
+                idFile: idFile,
+                idFilePublicId: idFilePublicId,
+                idFileUrl: idFileUrl,
+                idFileSource: idFileSource,
+
                 jobTitle: jobTitle,
                 company: company || '',
                 experience: experience,
@@ -248,7 +290,13 @@ export const verifyOTP = async (req, res) => {
             nationality: tempData.nationality,
             idType: tempData.idType,
             idNumber: tempData.idNumber,
-            idFile: tempData.idFile,
+
+            // ✅ ID file fields
+            idFile: tempData.idFile || '',
+            idFilePublicId: tempData.idFilePublicId || '',
+            idFileUrl: tempData.idFileUrl || '',
+            idFileSource: tempData.idFileSource || 'none',
+
             jobTitle: tempData.jobTitle,
             company: tempData.company,
             experience: tempData.experience,
@@ -393,7 +441,6 @@ export const login = async (req, res) => {
             });
         }
 
-        // Check approval status
         if (agent.approvalStatus === 'pending') {
             return res.status(403).json({
                 success: false,
@@ -516,6 +563,7 @@ export const updateProfile = async (req, res) => {
 
         const allowedFields = [
             'name', 'phone', 'dateOfBirth', 'gender', 'nationality',
+            'idType', 'idNumber',                     // ✅ ID fields
             'jobTitle', 'company', 'experience', 'education', 'specialization',
             'address', 'city', 'state', 'pincode', 'country',
             'languages', 'skills', 'bio'
@@ -526,6 +574,32 @@ export const updateProfile = async (req, res) => {
                 agent[field] = updateData[field];
             }
         });
+
+        // ✅ Handle ID file update (upload OR url OR keep existing)
+        const hasIdFile = req.file || (req.files && req.files.idFile);
+        const hasIdUrl = req.body.idFileUrl !== undefined;
+
+        if (hasIdFile || hasIdUrl) {
+            const { idFile, idFilePublicId, idFileUrl, idFileSource } = extractIdFileInfo(req);
+            agent.idFile = idFile;
+            agent.idFilePublicId = idFilePublicId;
+            agent.idFileUrl = idFileUrl;
+            agent.idFileSource = idFileSource;
+        }
+
+        // ✅ Profile image update (if provided)
+        if (req.files && req.files.profileImage && req.files.profileImage[0]) {
+            const file = req.files.profileImage[0];
+            agent.profileImage = `/uploads/agents/${file.filename}`;
+            agent.profileImagePublicId = file.filename;
+            agent.profileImageSource = 'upload';
+            agent.profileImageUrl = '';
+        } else if (req.body.profileImageUrl && req.body.profileImageUrl.trim()) {
+            agent.profileImageUrl = req.body.profileImageUrl.trim();
+            agent.profileImageSource = 'url';
+            agent.profileImage = '';
+            agent.profileImagePublicId = '';
+        }
 
         await agent.save();
 
@@ -733,7 +807,6 @@ export const approveAgent = async (req, res) => {
         const oldStatus = agent.approvalStatus;
         console.log("📋 Old Status:", oldStatus);
 
-        // Update agent
         agent.approvalStatus = 'approved';
         agent.approvedBy = adminId;
         agent.approvedAt = new Date();
@@ -744,7 +817,6 @@ export const approveAgent = async (req, res) => {
         console.log("✅ Agent approved successfully");
         console.log("📧 Sending approval email to:", agent.email);
 
-        // ✅ SEND APPROVAL EMAIL
         let emailSent = false;
         try {
             emailSent = await sendApprovalEmail(agent.email, agent.name);
@@ -810,7 +882,6 @@ export const rejectAgent = async (req, res) => {
         const oldStatus = agent.approvalStatus;
         console.log("📋 Old Status:", oldStatus);
 
-        // Update agent
         agent.approvalStatus = 'rejected';
         agent.rejectionReason = reason;
         agent.rejectedBy = adminId;
@@ -821,7 +892,6 @@ export const rejectAgent = async (req, res) => {
         console.log("❌ Agent rejected successfully");
         console.log("📧 Sending rejection email to:", agent.email);
 
-        // ✅ SEND REJECTION EMAIL
         let emailSent = false;
         try {
             emailSent = await sendRejectionEmail(agent.email, agent.name, reason);
@@ -879,7 +949,6 @@ export const setPendingStatus = async (req, res) => {
         const oldStatus = agent.approvalStatus;
         console.log("📋 Old Status:", oldStatus);
 
-        // Update agent
         agent.approvalStatus = 'pending';
         agent.rejectionReason = '';
         agent.isActive = false;
@@ -890,7 +959,6 @@ export const setPendingStatus = async (req, res) => {
         console.log("⏳ Agent set to pending");
         console.log("📧 Sending pending email to:", agent.email);
 
-        // ✅ SEND PENDING EMAIL
         let emailSent = false;
         try {
             emailSent = await sendPendingEmail(agent.email, agent.name);

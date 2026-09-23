@@ -75,6 +75,11 @@ const applicationSchema = new mongoose.Schema({
     programName: String,
 
     // ===== DOCUMENTS =====
+    // NOTE: Each field below stores the source value:
+    //   - If uploaded → file path e.g. "uploads/agents/xyz.pdf"
+    //   - If URL      → URL string e.g. "https://drive.google.com/..."
+    // 'urls' object stores URL separately for tracking.
+    // 'sources' object tells whether it came from 'upload' or 'url'.
     documents: {
         // Basic Documents
         idProof: String,
@@ -111,7 +116,70 @@ const applicationSchema = new mongoose.Schema({
         finalSignedCAL: String,
         finalPaymentInvoice: String,
         initialAdmissionPortfolio: String,
-        deferralAdmissionPortfolio: String
+        deferralAdmissionPortfolio: String,
+
+        // ===== URL STORAGE =====
+        // जब भी कोई URL द्वारा document submit हो, वो यहाँ store होगा
+        urls: {
+            idProof: String,
+            marksheet: String,
+            incomeCertificate: String,
+            profilePhoto: String,
+            previousCertificate: String,
+            bankPassbook: String,
+            dependentPassport1: String,
+            sponsorDetails: String,
+            bankStatementLetter: String,
+            visaCopies: String,
+            pendingDocument: String,
+            visaDocument: String,
+            studyContinuousLetter: String,
+            dependentPassport2: String,
+            transferStudents: String,
+            signedCAL: String,
+            paymentInvoice: String,
+            applicationFeeReceipt: String,
+            englishExamReceipt: String,
+            internalAdmissionFee: String,
+            bankCheckDraft: String,
+            insuranceFee: String,
+            tuitionFee: String,
+            finalSignedCAL: String,
+            finalPaymentInvoice: String,
+            initialAdmissionPortfolio: String,
+            deferralAdmissionPortfolio: String
+        },
+
+        // ===== SOURCE TRACKING (upload | url) =====
+        sources: {
+            idProof: String,
+            marksheet: String,
+            incomeCertificate: String,
+            profilePhoto: String,
+            previousCertificate: String,
+            bankPassbook: String,
+            dependentPassport1: String,
+            sponsorDetails: String,
+            bankStatementLetter: String,
+            visaCopies: String,
+            pendingDocument: String,
+            visaDocument: String,
+            studyContinuousLetter: String,
+            dependentPassport2: String,
+            transferStudents: String,
+            signedCAL: String,
+            paymentInvoice: String,
+            applicationFeeReceipt: String,
+            englishExamReceipt: String,
+            internalAdmissionFee: String,
+            bankCheckDraft: String,
+            insuranceFee: String,
+            tuitionFee: String,
+            finalSignedCAL: String,
+            finalPaymentInvoice: String,
+            initialAdmissionPortfolio: String,
+            deferralAdmissionPortfolio: String
+        }
     },
 
     // ===== STATEMENTS =====
@@ -147,6 +215,15 @@ const applicationSchema = new mongoose.Schema({
         ],
         default: 'submitted'
     },
+
+    // ===== STATUS HISTORY =====
+    statusHistory: [{
+        status: String,
+        changedBy: mongoose.Schema.Types.ObjectId,
+        changedByModel: { type: String, enum: ['Agent', 'Admin'] },
+        changedAt: Date,
+        remarks: String
+    }],
 
     // ===== ADMIN REVIEW =====
     reviewedBy: {

@@ -1,24 +1,17 @@
 import express from "express";
-import dns from "dns";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-
+import dns from "dns";
 dotenv.config();
 
-// ⭐⭐⭐ DNS FIX (بہتر بنایا گیا) ⭐⭐⭐
-// Node.js v22 میں یہ ضروری ہے
-dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
-dns.setDefaultResultOrder('ipv4first');
 
-// ⭐ اضافی: Node.js کے resolver کو زبردستی استعمال کرو
-import { setDefaultResultOrder } from "dns";
-setDefaultResultOrder("ipv4first");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
 
 // Import routes
 import adminRoutes from "./routes/adminRoutes.js";
@@ -38,7 +31,7 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ============================================
+// ==========================================
 // MONGODB CONNECTION
 // ============================================
 const connectDB = async () => {
