@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ============================================
-// ✅ DNS — صرف development میں (Vercel پر crash نہیں ہوگا)
+// ✅ DNS — only in development
 // ============================================
 if (process.env.NODE_ENV !== 'production') {
     try {
@@ -22,8 +22,6 @@ if (process.env.NODE_ENV !== 'production') {
     } catch (err) {
         console.log('⚠️ DNS set failed:', err.message);
     }
-} else {
-    console.log('ℹ️ Production mode — using Vercel default DNS');
 }
 
 // ============================================
@@ -43,7 +41,7 @@ import paymentRoutes from "./routes/paymentRoutes.js";
 const app = express();
 
 // ============================================
-// ✅ SIMPLE CORS — Vercel Safe (crash نہیں ہوگا)
+// ✅ CORS — Simple, Vercel Safe
 // ============================================
 app.use(cors({
     origin: [
@@ -59,9 +57,6 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
 
-// ❌ یہ line مت لکھیں — Vercel پر crash کرتی ہے
-// app.options('*', cors(corsOptions));
-
 // ============================================
 // BODY PARSERS
 // ============================================
@@ -74,12 +69,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ============================================
-// ✅ MONGODB — Cached Connection (Vercel friendly)
+// ✅ MONGODB — Cached Connection
 // ============================================
 let cachedConnection = null;
 
 const connectDB = async () => {
-    // اگر پہلے سے connected ہے تو وہی استعمال کریں
+    // Reuse existing connection if healthy
     if (cachedConnection && mongoose.connection.readyState === 1) {
         return cachedConnection;
     }
@@ -88,19 +83,17 @@ const connectDB = async () => {
         console.log('🔄 Connecting to MongoDB...');
 
         const uri = process.env.MONGO_URI;
-        if (!uri) {
-            throw new Error('MONGO_URI not defined in environment variables');
-        }
+        if (!uri) throw new Error('MONGO_URI not defined in environment variables');
 
         console.log('URI:', uri.replace(/:[^:@]+@/, ':****@'));
 
         const conn = await mongoose.connect(uri, {
-            serverSelectionTimeoutMS: 10000,    // 10s timeout
+            serverSelectionTimeoutMS: 15000,
             socketTimeoutMS: 45000,
-            connectTimeoutMS: 10000,
-            maxPoolSize: 5,                     // Serverless کے لیے کم
+            connectTimeoutMS: 15000,
+            maxPoolSize: 5,
             family: 4,
-            dbName: 'dgss',                     // ✅ Database name
+            dbName: 'dgss',
         });
 
         cachedConnection = conn;
@@ -115,7 +108,7 @@ const connectDB = async () => {
 };
 
 // ============================================
-// ✅ MIDDLEWARE: ہر request پر DB connected رکھیں
+// ✅ DB MIDDLEWARE — ensure connection on every request
 // ============================================
 app.use(async (req, res, next) => {
     try {
@@ -132,7 +125,7 @@ app.use(async (req, res, next) => {
 });
 
 // ============================================
-// ✅ HEALTH CHECK ROUTES
+// HEALTH CHECK ROUTES
 // ============================================
 app.get("/", (req, res) => {
     res.json({
@@ -153,7 +146,7 @@ app.get("/api/health", (req, res) => {
 });
 
 // ============================================
-// ✅ API ROUTES
+// API ROUTES
 // ============================================
 
 // Admin Routes
@@ -173,7 +166,7 @@ app.use('/api/universities', universityRoutes);
 app.use('/api/programs', programRoutes);
 
 // ============================================
-// ✅ ERROR HANDLER
+// ERROR HANDLER
 // ============================================
 app.use((err, req, res, next) => {
     console.error('❌ Server Error:', err.message);
@@ -196,19 +189,31 @@ app.use((req, res) => {
 });
 
 // ============================================
-// ✅ EXPORT FOR VERCEL — یہ ضروری ہے!
+// ✅ EXPORT FOR VERCEL
 // ============================================
 export default app;
 
 // ============================================
-// ✅ LOCAL SERVER (صرف development کے لیے)
+// ✅ LOCAL SERVER (development only)
 // ============================================
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 5000;
 
-    app.listen(PORT, "0.0.0.0", () => {
-        console.log(`🚀 Server running on port ${PORT}`);
-        console.log(`✅ CORS enabled for whitelisted origins`);
-        console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
-    });
+    // ✅ Connect DB first, then start server
+    connectDB()
+        .then(() => {
+            app.listen(PORT, "0.0.0.0", () => {
+                console.log(`🚀 Server running on port ${PORT}`);
+                console.log(`✅ CORS enabled for whitelisted origins`);
+                console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
+            });
+        })
+        .catch((err) => {
+            console.error('❌ Failed to connect to MongoDB on startup:', err.message);
+            console.error('⚠️ Starting server anyway (DB operations will fail)');
+
+            app.listen(PORT, "0.0.0.0", () => {
+                console.log(`🚀 Server running on port ${PORT} (DB disconnected)`);
+            });
+        });
 }
