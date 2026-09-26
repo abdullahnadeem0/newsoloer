@@ -75,11 +75,48 @@ const agentSchema = new mongoose.Schema({
         default: ''
     },
 
-    // ✅ NEW: Source tracking (upload | url | none)
+    // ✅ Source tracking (upload | url | none)
     idFileSource: {
         type: String,
         enum: ['upload', 'url', 'none', ''],
         default: 'none'
+    },
+
+    // ============================================
+    // ⭐ SIGNATURE (Optional — Upload OR URL)
+    // ============================================
+    signature: {
+        type: String,
+        default: ''
+    },
+    signaturePublicId: {
+        type: String,
+        default: ''
+    },
+    signatureUrl: {                       // ⭐ نیا — URL کے لیے
+        type: String,
+        default: ''
+    },
+    signatureSource: {                    // ⭐ نیا — source tracking
+        type: String,
+        enum: ['upload', 'url', 'none', ''],
+        default: 'none'
+    },
+
+    // ============================================
+    // ⭐ TERMS & CONDITIONS
+    // ============================================
+    agreeTerms: {
+        type: Boolean,
+        default: false
+    },
+    hasReadTerms: {
+        type: Boolean,
+        default: false
+    },
+    termsAcceptedAt: {
+        type: Date,
+        default: null
     },
 
     // ============================================
@@ -185,7 +222,6 @@ const agentSchema = new mongoose.Schema({
     // ✅ ADDITIONAL DOCUMENTS (Optional)
     // ============================================
     documents: {
-        // Resume / CV
         resume: {
             file: { type: String, default: '' },
             publicId: { type: String, default: '' },
@@ -196,8 +232,6 @@ const agentSchema = new mongoose.Schema({
                 default: 'none'
             }
         },
-
-        // Business License / Registration
         businessLicense: {
             file: { type: String, default: '' },
             publicId: { type: String, default: '' },
@@ -208,8 +242,6 @@ const agentSchema = new mongoose.Schema({
                 default: 'none'
             }
         },
-
-        // PAN Card (separate from ID)
         panCard: {
             file: { type: String, default: '' },
             publicId: { type: String, default: '' },
@@ -220,8 +252,6 @@ const agentSchema = new mongoose.Schema({
                 default: 'none'
             }
         },
-
-        // Address Proof
         addressProof: {
             file: { type: String, default: '' },
             publicId: { type: String, default: '' },
@@ -232,8 +262,6 @@ const agentSchema = new mongoose.Schema({
                 default: 'none'
             }
         },
-
-        // Any other document
         otherDocument: {
             file: { type: String, default: '' },
             publicId: { type: String, default: '' },
@@ -364,8 +392,19 @@ agentSchema.methods.comparePassword = async function(candidatePassword) {
 agentSchema.virtual('idFileDisplayUrl').get(function() {
     if (this.idFileUrl) return this.idFileUrl;
     if (this.idFile) {
-        // Convert Windows path to URL path
         const cleanPath = this.idFile.replace(/\\/g, '/');
+        return cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+    }
+    return '';
+});
+
+// ============================================
+// ⭐ VIRTUAL: Get Signature display URL
+// ============================================
+agentSchema.virtual('signatureDisplayUrl').get(function() {
+    if (this.signatureUrl) return this.signatureUrl;
+    if (this.signature) {
+        const cleanPath = this.signature.replace(/\\/g, '/');
         return cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
     }
     return '';
@@ -389,16 +428,11 @@ agentSchema.virtual('profileImageDisplayUrl').get(function() {
 agentSchema.methods.getDocumentUrl = function(docType) {
     const doc = this.documents?.[docType];
     if (!doc) return '';
-
-    // URL has priority
     if (doc.url) return doc.url;
-
-    // Fallback to file path
     if (doc.file) {
         const cleanPath = doc.file.replace(/\\/g, '/');
         return cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
     }
-
     return '';
 };
 
@@ -407,6 +441,13 @@ agentSchema.methods.getDocumentUrl = function(docType) {
 // ============================================
 agentSchema.methods.hasIdDocument = function() {
     return !!(this.idFile || this.idFileUrl);
+};
+
+// ============================================
+// ⭐ METHOD: Check if agent has signature
+// ============================================
+agentSchema.methods.hasSignature = function() {
+    return !!(this.signature || this.signatureUrl);
 };
 
 // Ensure virtuals are included when converting to JSON

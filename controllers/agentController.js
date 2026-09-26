@@ -39,7 +39,7 @@ const extractIdFileInfo = (req) => {
         idFile = `/uploads/agents/${fileName}`;
         idFilePublicId = fileName;
         idFileSource = 'upload';
-        idFileUrl = ''; // file upload होने पर URL ignore
+        idFileUrl = '';
     }
     // Priority 2: Multiple files array
     else if (req.files && req.files.idFile && req.files.idFile[0]) {
@@ -53,7 +53,6 @@ const extractIdFileInfo = (req) => {
     else if (idFileUrl && idFileUrl.trim()) {
         idFileSource = 'url';
     }
-    // Priority 4: Nothing (optional)
 
     return {
         idFile,
@@ -63,6 +62,96 @@ const extractIdFileInfo = (req) => {
     };
 };
 
+// ============================================
+// ✅ HELPER: Extract signature file (optional)
+// ============================================
+const extractSignatureInfo = (req) => {
+    let signature = '';
+    let signaturePublicId = '';
+
+    if (req.files && req.files.signature && req.files.signature[0]) {
+        const file = req.files.signature[0];
+        signature = `/uploads/agents/${file.filename}`;
+        signaturePublicId = file.filename;
+    }
+
+    return { signature, signaturePublicId };
+};
+// ============================================
+// 15. GET AGENT CERTIFICATE DATA
+// ============================================
+export const getCertificate = async (req, res) => {
+    try {
+        const agent = await Agent.findById(req.agent.id)
+            .select("-password -otp -otpExpiry -resetToken -resetTokenExpiry");
+
+        if (!agent) {
+            return res.status(404).json({
+                success: false,
+                message: "Agent not found"
+            });
+        }
+
+        // ✅ Sirf approved agents ko certificate milega
+        if (agent.approvalStatus !== 'approved') {
+            return res.status(403).json({
+                success: false,
+                message: `Certificate only available for approved agents. Your status: ${agent.approvalStatus}`,
+                status: agent.approvalStatus
+            });
+        }
+
+        // ✅ Unique Certificate ID generate karo (stable — same agent ke liye same ID)
+        const certYear = new Date(agent.approvedAt || agent.createdAt).getFullYear();
+        const shortId = agent._id.toString().slice(-6).toUpperCase();
+        const certificateId = `AGT-${certYear}-${shortId}`;
+
+        // ✅ Verification URL (QR code ke liye)
+        const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-agent/${agent._id}`;
+
+        res.json({
+            success: true,
+            certificate: {
+                certificateId,
+                issuedAt: agent.approvedAt || agent.createdAt,
+                verificationUrl,
+
+                // Agent Info
+                agent: {
+                    id: agent._id,
+                    name: agent.name,
+                    email: agent.email,
+                    phone: agent.phone,
+                    jobTitle: agent.jobTitle,
+                    company: agent.company,
+                    specialization: agent.specialization,
+                    experience: agent.experience,
+                    education: agent.education,
+                    city: agent.city,
+                    state: agent.state,
+                    country: agent.country,
+                    bio: agent.bio,
+                    languages: agent.languages,
+                    skills: agent.skills,
+                    profileImage: agent.profileImageDisplayUrl || '',
+                    signature: agent.signatureDisplayUrl || '',
+                    joinedAt: agent.createdAt,
+                    approvedAt: agent.approvedAt,
+                    idType: agent.idType,
+                    idNumber: agent.idNumber ? `****${agent.idNumber.slice(-4)}` : '', // masked
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ Get Certificate Error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Error fetching certificate",
+            error: error.message
+        });
+    }
+};
 // ============================================
 // 1. AGENT SIGN UP
 // ============================================
@@ -74,7 +163,8 @@ export const signUp = async (req, res) => {
             idType, idNumber,
             jobTitle, company, experience, education, specialization,
             address, city, state, pincode, country,
-            languages, skills, bio
+            languages, skills, bio,
+            agreeTerms, hasReadTerms
         } = req.body;
 
         console.log("=========================================");
@@ -85,6 +175,9 @@ export const signUp = async (req, res) => {
         console.log("📱 Phone:", phone);
         console.log("🔗 ID URL:", req.body.idFileUrl || 'none');
         console.log("📎 ID File:", req.file ? 'uploaded' : 'none');
+        console.log("✍️ Signature:", req.files?.signature ? 'uploaded' : 'none');
+        console.log("✅ Agree Terms:", agreeTerms);
+        console.log("✅ Has Read Terms:", hasReadTerms);
         console.log("=========================================");
 
         // ===== VALIDATION =====
@@ -117,10 +210,26 @@ export const signUp = async (req, res) => {
             });
         }
 
-        if (!/^[0-9]{10}$/.test(phone)) {
+        // ✅ 11-digit phone validation
+        if (!/^[0-9]{11}$/.test(phone)) {
             return res.status(400).json({
                 success: false,
-                message: "Please enter a valid 10-digit phone number"
+                message: "Please enter a valid 11-digit phone number"
+            });
+        }
+
+        // ⭐ Terms validation (Lازمی)
+        if (!agreeTerms || agreeTerms === 'false') {
+            return res.status(400).json({
+                success: false,
+                message: "You must agree to the Terms and Conditions"
+            });
+        }
+
+        if (!hasReadTerms || hasReadTerms === 'false') {
+            return res.status(400).json({
+                success: false,
+                message: "You must confirm that you have read the Terms and Conditions properly"
             });
         }
 
@@ -141,12 +250,11 @@ export const signUp = async (req, res) => {
             });
         }
 
-        // ===== ✅ HANDLE ID FILE (upload OR url OR none) =====
+        // ===== HANDLE ID FILE =====
         const { idFile, idFilePublicId, idFileUrl, idFileSource } = extractIdFileInfo(req);
 
-        console.log("📁 ID file info:", { idFile, idFileUrl, idFileSource });
-
-        // ✅ कोई error नहीं — ID document optional है
+        // ===== HANDLE SIGNATURE (Optional) =====
+        const { signature, signaturePublicId } = extractSignatureInfo(req);
 
         // ===== PARSE LANGUAGES & SKILLS =====
         let parsedLanguages = [];
@@ -181,11 +289,16 @@ export const signUp = async (req, res) => {
                 idType: idType || '',
                 idNumber: idNumber ? idNumber.trim() : '',
 
-                // ✅ ID file fields
                 idFile: idFile,
                 idFilePublicId: idFilePublicId,
                 idFileUrl: idFileUrl,
                 idFileSource: idFileSource,
+
+                signature: signature,
+                signaturePublicId: signaturePublicId,
+
+                agreeTerms: agreeTerms === 'true' || agreeTerms === true,
+                hasReadTerms: hasReadTerms === 'true' || hasReadTerms === true,
 
                 jobTitle: jobTitle,
                 company: company || '',
@@ -244,8 +357,6 @@ export const verifyOTP = async (req, res) => {
         console.log("=========================================");
         console.log("🔐 VERIFY AGENT OTP");
         console.log("=========================================");
-        console.log("📧 Email:", email);
-        console.log("🔑 OTP:", otp);
 
         if (!email || !otp) {
             return res.status(400).json({
@@ -279,7 +390,6 @@ export const verifyOTP = async (req, res) => {
 
         console.log("✅ OTP Matched! Saving agent...");
 
-        // ===== SAVE AGENT WITH PENDING STATUS =====
         const agent = new Agent({
             name: tempData.name,
             email: tempData.email,
@@ -291,11 +401,17 @@ export const verifyOTP = async (req, res) => {
             idType: tempData.idType,
             idNumber: tempData.idNumber,
 
-            // ✅ ID file fields
             idFile: tempData.idFile || '',
             idFilePublicId: tempData.idFilePublicId || '',
             idFileUrl: tempData.idFileUrl || '',
             idFileSource: tempData.idFileSource || 'none',
+
+            signature: tempData.signature || '',
+            signaturePublicId: tempData.signaturePublicId || '',
+
+            agreeTerms: tempData.agreeTerms || false,
+            hasReadTerms: tempData.hasReadTerms || false,
+            termsAcceptedAt: new Date(),
 
             jobTitle: tempData.jobTitle,
             company: tempData.company,
@@ -321,7 +437,6 @@ export const verifyOTP = async (req, res) => {
         await AgentOTPStore.deleteOne({ email: email.toLowerCase() });
         console.log("🗑️ Agent OTPStore deleted");
 
-        // ===== SEND PENDING EMAIL =====
         try {
             await sendPendingEmail(agent.email, agent.name);
             console.log("✅ Pending email sent");
@@ -413,11 +528,6 @@ export const login = async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        console.log("=========================================");
-        console.log("🔐 AGENT LOGIN REQUEST");
-        console.log("=========================================");
-        console.log("📧 Email:", email);
-
         if (!email || !password) {
             return res.status(400).json({
                 success: false,
@@ -486,8 +596,6 @@ export const login = async (req, res) => {
             process.env.JWT_SECRET || "your_jwt_secret_key_here",
             { expiresIn: "7d" }
         );
-
-        console.log("✅ Login successful for:", agent.email);
 
         res.json({
             success: true,
@@ -563,7 +671,7 @@ export const updateProfile = async (req, res) => {
 
         const allowedFields = [
             'name', 'phone', 'dateOfBirth', 'gender', 'nationality',
-            'idType', 'idNumber',                     // ✅ ID fields
+            'idType', 'idNumber',
             'jobTitle', 'company', 'experience', 'education', 'specialization',
             'address', 'city', 'state', 'pincode', 'country',
             'languages', 'skills', 'bio'
@@ -575,7 +683,6 @@ export const updateProfile = async (req, res) => {
             }
         });
 
-        // ✅ Handle ID file update (upload OR url OR keep existing)
         const hasIdFile = req.file || (req.files && req.files.idFile);
         const hasIdUrl = req.body.idFileUrl !== undefined;
 
@@ -587,7 +694,6 @@ export const updateProfile = async (req, res) => {
             agent.idFileSource = idFileSource;
         }
 
-        // ✅ Profile image update (if provided)
         if (req.files && req.files.profileImage && req.files.profileImage[0]) {
             const file = req.files.profileImage[0];
             agent.profileImage = `/uploads/agents/${file.filename}`;
@@ -783,18 +889,12 @@ export const getAgentById = async (req, res) => {
 };
 
 // ============================================
-// 11. APPROVE AGENT (ADMIN) - WITH EMAIL
+// 11. APPROVE AGENT (ADMIN)
 // ============================================
 export const approveAgent = async (req, res) => {
     try {
         const { id } = req.params;
         const adminId = req.admin.id;
-
-        console.log("=========================================");
-        console.log("✅ APPROVING AGENT");
-        console.log("=========================================");
-        console.log("📤 Agent ID:", id);
-        console.log("👨‍💼 Admin ID:", adminId);
 
         const agent = await Agent.findById(id);
         if (!agent) {
@@ -805,7 +905,6 @@ export const approveAgent = async (req, res) => {
         }
 
         const oldStatus = agent.approvalStatus;
-        console.log("📋 Old Status:", oldStatus);
 
         agent.approvalStatus = 'approved';
         agent.approvedBy = adminId;
@@ -813,9 +912,6 @@ export const approveAgent = async (req, res) => {
         agent.isActive = true;
         agent.rejectionReason = '';
         await agent.save();
-
-        console.log("✅ Agent approved successfully");
-        console.log("📧 Sending approval email to:", agent.email);
 
         let emailSent = false;
         try {
@@ -850,19 +946,13 @@ export const approveAgent = async (req, res) => {
 };
 
 // ============================================
-// 12. REJECT AGENT (ADMIN) - WITH EMAIL
+// 12. REJECT AGENT (ADMIN)
 // ============================================
 export const rejectAgent = async (req, res) => {
     try {
         const { id } = req.params;
         const { reason } = req.body;
         const adminId = req.admin.id;
-
-        console.log("=========================================");
-        console.log("❌ REJECTING AGENT");
-        console.log("=========================================");
-        console.log("📤 Agent ID:", id);
-        console.log("📝 Reason:", reason);
 
         if (!reason) {
             return res.status(400).json({
@@ -880,7 +970,6 @@ export const rejectAgent = async (req, res) => {
         }
 
         const oldStatus = agent.approvalStatus;
-        console.log("📋 Old Status:", oldStatus);
 
         agent.approvalStatus = 'rejected';
         agent.rejectionReason = reason;
@@ -888,9 +977,6 @@ export const rejectAgent = async (req, res) => {
         agent.rejectedAt = new Date();
         agent.isActive = false;
         await agent.save();
-
-        console.log("❌ Agent rejected successfully");
-        console.log("📧 Sending rejection email to:", agent.email);
 
         let emailSent = false;
         try {
@@ -926,17 +1012,12 @@ export const rejectAgent = async (req, res) => {
 };
 
 // ============================================
-// 13. SET AGENT TO PENDING (ADMIN) - WITH EMAIL
+// 13. SET AGENT TO PENDING (ADMIN)
 // ============================================
 export const setPendingStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const adminId = req.admin.id;
-
-        console.log("=========================================");
-        console.log("⏳ SETTING AGENT TO PENDING");
-        console.log("=========================================");
-        console.log("📤 Agent ID:", id);
 
         const agent = await Agent.findById(id);
         if (!agent) {
@@ -947,7 +1028,6 @@ export const setPendingStatus = async (req, res) => {
         }
 
         const oldStatus = agent.approvalStatus;
-        console.log("📋 Old Status:", oldStatus);
 
         agent.approvalStatus = 'pending';
         agent.rejectionReason = '';
@@ -955,9 +1035,6 @@ export const setPendingStatus = async (req, res) => {
         agent.approvedAt = null;
         agent.rejectedAt = null;
         await agent.save();
-
-        console.log("⏳ Agent set to pending");
-        console.log("📧 Sending pending email to:", agent.email);
 
         let emailSent = false;
         try {
@@ -997,11 +1074,6 @@ export const deleteAgent = async (req, res) => {
     try {
         const { id } = req.params;
 
-        console.log("=========================================");
-        console.log("🗑️ DELETING AGENT");
-        console.log("=========================================");
-        console.log("📤 Agent ID:", id);
-
         const agent = await Agent.findByIdAndDelete(id);
         if (!agent) {
             return res.status(404).json({
@@ -1009,8 +1081,6 @@ export const deleteAgent = async (req, res) => {
                 message: "Agent not found"
             });
         }
-
-        console.log("✅ Agent deleted:", agent.email);
 
         res.json({
             success: true,

@@ -7,7 +7,8 @@ import {
     login,
     getProfile,
     updateProfile,
-    changePassword
+    changePassword,
+    getCertificate          // ⭐ already imported — good!
 } from '../controllers/agentController.js';
 import { protectAgent } from '../middleware/auth.js';
 
@@ -31,7 +32,14 @@ const upload = multer({
 // ============================================
 // PUBLIC ROUTES
 // ============================================
-router.post('/signup', upload.single('idFile'), signUp);
+router.post(
+    '/signup',
+    upload.fields([
+        { name: 'idFile', maxCount: 1 },
+        { name: 'signature', maxCount: 1 }
+    ]),
+    signUp
+);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
 router.post('/login', login);
@@ -39,8 +47,20 @@ router.post('/login', login);
 // ============================================
 // AGENT PROTECTED ROUTES
 // ============================================
+
+// ⭐ CERTIFICATE — MUST be before '/:id' route!
+router.get('/certificate', protectAgent, getCertificate);
+
 router.get('/profile', protectAgent, getProfile);
-router.put('/:id', protectAgent, updateProfile);
+router.put(
+    '/:id',
+    upload.fields([
+        { name: 'idFile', maxCount: 1 },
+        { name: 'profileImage', maxCount: 1 }
+    ]),
+    protectAgent,
+    updateProfile
+);
 router.put('/:id/change-password', protectAgent, changePassword);
 
 export default router;
